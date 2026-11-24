@@ -1,0 +1,170 @@
+--- a/longest_path/solver.py
++++ b/longest_path/solver.py
+@@ -71,9 +71,16 @@
+ 
+ 
+ class _Solver:
+-    def __init__(self, net: Network, time_limit: Optional[float], use_heuristic: bool) -> None:
++    def __init__(
++        self,
++        net: Network,
++        time_limit: Optional[float],
++        use_heuristic: bool,
++        use_block_bound: bool = False,
++    ) -> None:
+         self.net = net
+         self.use_heuristic = use_heuristic
++        self.use_block_bound = use_block_bound
+         self.time_limit = time_limit
+         self.deadline = None if time_limit is None else time.monotonic() + time_limit
+         self.ids = net.junctions
+@@ -203,6 +210,78 @@
+                 mt = max_tail[u]
+         return total / 2.0, mt
+ 
++    def _block_bound(self, e: int) -> float:
++        """端 e から未訪問の駅だけを通って伸ばせる距離の上界（ブロックカット木版、しっぽは含まない）。
++
++        未訪問の駅と e からなるグラフを関節点で 2 連結成分（ブロック）に分ける。
++        e から出る単純な経路は、関節点を越えて別のブロックに入ったら元のブロックに戻れない
++        （関節点を 2 度通ることになる）。したがって経路が通るブロックは、ブロックカット木の
++        根 e からの 1 本の道に沿ったものだけになる。
++        各ブロック B（入口の駅 c）の中で使う距離は「c は B 内の辺 1 本、それ以外の駅は 2 本」で
++        抑えられるので、その値を木の上で「入口から下る道のうち最大のもの」として足し合わせる。
++        """
++        visited, jadj = self.visited, self.jadj
++        disc = {e: 0}
++        low = {e: 0}
++        t = 1
++        estack: List[Tuple[int, int, float]] = []
++        value: dict = {}  # value[v]: v から子孫のブロックへ下りて伸ばせる距離の上界
++        stack = [[e, -1, 0]]  # [駅, 来たチェーン ID, 次に調べる隣接リストの位置]
++        while stack:
++            fr = stack[-1]
++            v, pe, i = fr
++            nbrs = jadj[v]
++            if i < len(nbrs):
++                fr[2] = i + 1
++                w, cid, j = nbrs[i]
++                if cid == pe or (visited[j] and j != e):
++                    continue
++                if j not in disc:
++                    disc[j] = low[j] = t
++                    t += 1
++                    estack.append((v, j, w))
++                    stack.append([j, cid, 0])
++                elif disc[j] < disc[v]:  # 祖先への後退辺（平行なチェーンも含む）
++                    estack.append((v, j, w))
++                    if disc[j] < low[v]:
++                        low[v] = disc[j]
++                continue
++            stack.pop()
++            if not stack:
++                break
++            u = stack[-1][0]
++            if low[v] < low[u]:
++                low[u] = low[v]
++            if low[v] >= disc[u]:
++                # u を入口とするブロックを取り出す
++                top: dict = {}
++                while True:
++                    a, b, w = estack.pop()
++                    for x in (a, b):
++                        p = top.get(x)
++                        if p is None:
++                            top[x] = [w, 0.0]
++                        elif w > p[0]:
++                            p[1] = p[0]
++                            p[0] = w
++                        elif w > p[1]:
++                            p[1] = w
++                    if a == u and b == v:
++                        break
++                inside = top[u][0]
++                best_exit = 0.0
++                for x, (w1, w2) in top.items():
++                    if x == u:
++                        continue
++                    inside += w1 + w2
++                    vx = value.get(x, 0.0)
++                    if vx > best_exit:
++                        best_exit = vx
++                cand = inside / 2.0 + best_exit
++                if cand > value.get(u, 0.0):
++                    value[u] = cand
++        return value.get(e, 0.0)
++
+     def _can_improve(self, upper: float) -> bool:
+         return upper * (1 + _BOUND_REL_SLACK) + _BOUND_ABS_SLACK > self.best_len
+ 
+@@ -242,7 +321,21 @@
+                     self._offer(cur + w, _CycleRecord(tuple(fpath), tuple(fch) + (cid,)))
+         # 3. 枝刈り（front も back もまだ伸ばせる。根では s から 2 方向に伸ばせる）
+         ub, mt = self._bound((h, s) if fch else (s, s))
+-        return self._can_improve(cur + ub + 2 * mt)
++        if not self._can_improve(cur + ub + 2 * mt):
++            return False
++        if not self.use_block_bound:
++            return True
++        if fch:
++            # 経路のまま終わる: h 側と s 側の伸びはそれぞれのブロックカット木で抑える
++            # 閉路で終わる: h 側の伸び＋s へ戻る最後の 1 本
++            back = self._block_bound(s)
++            t1s = max(
++                (w for w, _, j in self.jadj[s] if not self.visited[j] or j == h), default=0.0
++            )
++            ub2 = cur + self._block_bound(h) + max(back + 2 * mt, t1s)
++        else:
++            ub2 = cur + 2 * self._block_bound(s) + 2 * mt
++        return self._can_improve(ub2)
+ 
+     def _visit_back(
+         self, fpath: List[int], fch: List[int], bpath: List[int], bch: List[int], cur: float
+@@ -257,7 +350,12 @@
+             chains = tuple(reversed(bch)) + tuple(fch)
+             self._offer(cur + g, _PathRecord(nodes, chains, tb, th))
+         ub, mt = self._bound((b,))
+-        return self._can_improve(cur + ub + mt + self.max_tail[h])
++        tails = mt + self.max_tail[h]
++        if not self._can_improve(cur + ub + tails):
++            return False
++        if not self.use_block_bound:
++            return True
++        return self._can_improve(cur + self._block_bound(b) + tails)
+ 
+     def _search_from(self, s: int) -> None:
+         visited, jadj = self.visited, self.jadj
+@@ -305,7 +403,11 @@
+                 # front を h で止め、s の反対側（back）へ伸ばす探索に移る
+                 fr[2] = i + 1
+                 ub, mt = self._bound((s,))
+-                if self._can_improve(flen[-1] + ub + mt + self.max_tail[h]):
++                tails = mt + self.max_tail[h]
++                ok = self._can_improve(flen[-1] + ub + tails)
++                if ok and self.use_block_bound:
++                    ok = self._can_improve(flen[-1] + self._block_bound(s) + tails)
++                if ok:
+                     frames.append([BACK_ROOT, s, 0])
+                     continue
+             frames.pop()
+@@ -404,7 +506,10 @@
+ 
+ 
+ def solve(
+-    edges: Sequence[Edge], time_limit: Optional[float] = None, use_heuristic: bool = True
++    edges: Sequence[Edge],
++    time_limit: Optional[float] = None,
++    use_heuristic: bool = True,
++    use_block_bound: bool = False,
+ ) -> Result:
+     """最長経路を求める。time_limit 秒（None なら無制限）で打ち切り、その時点の最良解を返す。
+ 
+@@ -413,7 +518,7 @@
+     """
+     try:
+         net = build_network(edges)
+-        solver = _Solver(net, time_limit, use_heuristic)
++        solver = _Solver(net, time_limit, use_heuristic, use_block_bound)
+     except KeyboardInterrupt:
+         return Result(
+             route=[], length=0.0, is_cycle=False, optimal=False, interrupted=True,

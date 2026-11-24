@@ -1,0 +1,11 @@
+random  --nodes 25 --edges 50  seed=1 J= 19 | old:    1.21s opt  nodes=   169726 len=1386.0 | block:    2.62s opt  nodes=   128908 len=1386.0
+random  --nodes 25 --edges 50  seed=2 J= 20 | old:    2.02s opt  nodes=   243300 len=1285.0 | block:    4.84s opt  nodes=   207247 len=1285.0
+random  --nodes 30 --edges 60  seed=1 J= 25 | old:    4.40s opt  nodes=   507728 len=1596.6 | block:   11.64s opt  nodes=   470509 len=1596.6
+random  --nodes 30 --edges 60  seed=2 J= 21 | old:    1.13s opt  nodes=   139928 len=1584.6 | block:    2.73s opt  nodes=   128922 len=1584.6
+railway --hubs 49              seed=1 J= 29 | old:    0.18s opt  nodes=    18644 len=782.7 | block:    0.34s opt  nodes=    11395 len=782.7
+railway --hubs 49              seed=2 J= 31 | old:    1.22s opt  nodes=   111910 len=978.2 | block:    2.80s opt  nodes=    87001 len=978.2
+railway --hubs 64              seed=1 J= 37 | old:    0.67s opt  nodes=    54827 len=1032.2 | block:    1.33s opt  nodes=    34040 len=1032.2
+railway --hubs 64              seed=2 J= 44 | old:   12.57s opt  nodes=  1035593 len=1122.3 | block:   24.80s opt  nodes=   687195 len=1122.3
+railway --hubs 81              seed=1 J= 54 | old:   33.58s opt  nodes=  2715500 len=1414.0 | block:   51.79s opt  nodes=  1064161 len=1414.0
+railway --hubs 81              seed=2 J= 61 | old:   90.00s TIME nodes=  7340288 len=1453.1 | block:   90.00s TIME nodes=  2405120 len=1453.1
+railway --hubs 100             seed=1 J= 64 | old:   90.00s TIME nodes=  7930368 len=1634.1 | block:   90.01s TIME nodes=  1409536 len=1634.1
